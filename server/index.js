@@ -10,6 +10,9 @@ import authRoutes from './routes/auth.js'
 import aiRoutes from './routes/ai.js'
 import assessmentRoutes from './routes/assessments.js'
 import analyticsRoutes from './routes/analytics.js'
+import materialsRoutes from './routes/materials.js'
+import adminRoutes from './routes/admin.js'
+import miscRoutes from './routes/misc.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 // The API never runs on the Vite dev port (5173). Some launchers inject PORT=5173
@@ -27,6 +30,9 @@ app.use('/api/auth', authRoutes)
 app.use('/api/ai', aiRoutes)
 app.use('/api/assessments', assessmentRoutes)
 app.use('/api/analytics', analyticsRoutes)
+app.use('/api/materials', materialsRoutes)
+app.use('/api/admin', adminRoutes)
+app.use('/api', miscRoutes) // /api/competencies, /api/dashboard, /api/recommendations, /api/learning-progress
 
 // Serve the built frontend in production (npm run build -> dist/)
 const dist = join(__dirname, '..', 'dist')

@@ -1,4 +1,4 @@
-// Seeded cohort for the Admin / Training Officer dashboard.
+// Seeded cohort for the Training Manager dashboard.
 // Deterministic (seeded PRNG) so the demo shows the same numbers every time.
 
 import { COMPETENCY_ORDER } from './competencyFramework.js'

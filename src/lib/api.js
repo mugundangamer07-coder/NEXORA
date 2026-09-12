@@ -40,3 +40,24 @@ export async function apiFetch(path, { method = 'GET', body, auth = true } = {})
   }
   return data
 }
+
+// Multipart upload (real file, validated server-side too) — used for /api/materials/upload.
+export async function apiUpload(path, file) {
+  const form = new FormData()
+  form.append('file', file)
+  const headers = {}
+  const tok = getToken()
+  if (tok) headers.authorization = `Bearer ${tok}`
+
+  const res = await fetch(`/api${path}`, { method: 'POST', headers, body: form })
+  let data = {}
+  try {
+    data = await res.json()
+  } catch {}
+  if (!res.ok) {
+    const err = new Error(data.error || `Upload failed (${res.status})`)
+    err.status = res.status
+    throw err
+  }
+  return data
+}

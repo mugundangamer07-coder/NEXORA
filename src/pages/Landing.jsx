@@ -9,7 +9,7 @@ const features = [
   { icon: ListChecks, title: 'AI-generated assessments', desc: 'High-quality MCQs with explanations, topic tags and difficulty — 5, 10 or 20 questions.' },
   { icon: Target, title: 'Explainable competency gaps', desc: 'Topic-by-topic diagnosis that tells you not just your score, but exactly why a gap exists.' },
   { icon: RouteIcon, title: 'Personalized learning path', desc: 'An ordered roadmap built from your gaps and the competency dependency graph.' },
-  { icon: Building2, title: 'Organizational insight', desc: 'Training officers see department-wide competency gaps to plan capacity building.' },
+  { icon: Building2, title: 'Organizational insight', desc: 'Training managers see department-wide competency gaps to plan capacity building.' },
   { icon: ShieldCheck, title: 'iGOT Karmayogi ready', desc: 'Recommendation layer designed to plug into the iGOT Karmayogi training ecosystem.' },
 ]
 
@@ -35,9 +35,12 @@ export default function Landing() {
             <h1 className="mt-5 text-4xl md:text-5xl font-extrabold leading-tight max-w-3xl">
               AI competency intelligence that turns any learning material into a personalized training plan.
             </h1>
+            <p className="mt-3 text-accent-100 font-semibold tracking-wide text-sm uppercase">
+              From Learning Material to Measurable Competency
+            </p>
             <p className="mt-5 text-white/70 text-lg max-w-2xl">
               NEXORA identifies competency gaps, generates assessments from uploaded documents, and recommends
-              personalized training aligned with the iGOT Karmayogi ecosystem.
+              personalized training that complements the iGOT Karmayogi ecosystem — it does not replace it.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Link to="/upload" className="btn-primary text-base px-5 py-3">
@@ -96,6 +99,9 @@ export default function Landing() {
         <Link to="/upload" className="btn-primary mt-6 text-base px-6 py-3 inline-flex">
           <Upload size={18} /> Start the assessment
         </Link>
+        <p className="mt-10 text-xs text-slate-400">
+          NEXORA · Team Quest Coders · Smart India Hackathon (SIH26101) · Built to complement, not replace, iGOT Karmayogi.
+        </p>
       </section>
     </div>
   )

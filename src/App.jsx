@@ -9,6 +9,7 @@ import UploadPage from './pages/UploadPage.jsx'
 import Quiz from './pages/Quiz.jsx'
 import Results from './pages/Results.jsx'
 import LearningPath from './pages/LearningPath.jsx'
+import ManagerDashboard from './pages/ManagerDashboard.jsx'
 import AdminDashboard from './pages/AdminDashboard.jsx'
 
 function Splash() {
@@ -19,13 +20,20 @@ function Splash() {
   )
 }
 
-function RequireAuth({ role, children }) {
+// Where each role lands after login / on "/".
+function homeFor(role) {
+  if (role === 'admin') return '/admin'
+  if (role === 'manager') return '/manager'
+  return '/dashboard'
+}
+
+function RequireAuth({ roles, children }) {
   const { state } = useApp()
   const loc = useLocation()
   if (!state.authReady) return <Splash />
   if (!state.user) return <Navigate to="/login" state={{ from: loc.pathname }} replace />
   if (!state.hydrated) return <Splash />
-  if (role && state.user.role !== role) return <Navigate to="/dashboard" replace />
+  if (roles && !roles.includes(state.user.role)) return <Navigate to={homeFor(state.user.role)} replace />
   return children
 }
 
@@ -41,7 +49,7 @@ export default function App() {
           !state.authReady ? (
             <Splash />
           ) : state.user ? (
-            <Navigate to={state.user.role === 'officer' ? '/admin' : '/dashboard'} replace />
+            <Navigate to={homeFor(state.user.role)} replace />
           ) : (
             <Landing />
           )
@@ -50,7 +58,7 @@ export default function App() {
       <Route
         path="/dashboard"
         element={
-          <RequireAuth>
+          <RequireAuth roles={['learner']}>
             <Layout>
               <LearnerDashboard />
             </Layout>
@@ -60,7 +68,7 @@ export default function App() {
       <Route
         path="/upload"
         element={
-          <RequireAuth>
+          <RequireAuth roles={['learner']}>
             <Layout>
               <UploadPage />
             </Layout>
@@ -70,7 +78,7 @@ export default function App() {
       <Route
         path="/quiz"
         element={
-          <RequireAuth>
+          <RequireAuth roles={['learner']}>
             <Layout>
               <Quiz />
             </Layout>
@@ -80,7 +88,7 @@ export default function App() {
       <Route
         path="/results"
         element={
-          <RequireAuth>
+          <RequireAuth roles={['learner']}>
             <Layout>
               <Results />
             </Layout>
@@ -90,7 +98,7 @@ export default function App() {
       <Route
         path="/path"
         element={
-          <RequireAuth>
+          <RequireAuth roles={['learner']}>
             <Layout>
               <LearningPath />
             </Layout>
@@ -98,9 +106,19 @@ export default function App() {
         }
       />
       <Route
+        path="/manager"
+        element={
+          <RequireAuth roles={['manager', 'admin']}>
+            <Layout>
+              <ManagerDashboard />
+            </Layout>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/admin"
         element={
-          <RequireAuth role="officer">
+          <RequireAuth roles={['admin']}>
             <Layout>
               <AdminDashboard />
             </Layout>

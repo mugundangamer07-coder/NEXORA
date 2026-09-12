@@ -27,7 +27,8 @@ export default function Login() {
   const [error, setError] = useState('')
 
   if (state.authReady && state.user) {
-    return <Navigate to={state.user.role === 'officer' ? '/admin' : '/dashboard'} replace />
+    const home = state.user.role === 'admin' ? '/admin' : state.user.role === 'manager' ? '/manager' : '/dashboard'
+    return <Navigate to={home} replace />
   }
 
   const upd = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }))
@@ -44,20 +45,21 @@ export default function Login() {
             password: f.password,
             name: f.name,
             role: f.role,
-            department: f.role === 'officer' ? f.department : null,
+            department: f.role === 'manager' ? f.department : null,
           })
     setBusy(false)
     if (res.ok) nav('/', { replace: true }) // "/" redirects by role
     else setError(res.error || 'Something went wrong')
   }
 
+  const DEMO_EMAILS = {
+    learner: 'learner@nexora.gov.in',
+    manager: 'manager@nexora.gov.in',
+    admin: 'admin@nexora.gov.in',
+  }
   function fillDemo(kind) {
     setMode('login')
-    setF((s) => ({
-      ...s,
-      email: kind === 'officer' ? 'officer@nexora.gov.in' : 'learner@nexora.gov.in',
-      password: 'demo1234',
-    }))
+    setF((s) => ({ ...s, email: DEMO_EMAILS[kind], password: 'demo1234' }))
   }
 
   return (
@@ -68,15 +70,13 @@ export default function Login() {
           <BrandMark size={28} /> NEXORA
         </div>
         <div>
-          <h1 className="text-3xl font-extrabold leading-tight max-w-md">
-            AI competency intelligence for India's Official Statistical System
-          </h1>
+          <h1 className="text-3xl font-extrabold leading-tight max-w-md">From Learning Material to Measurable Competency</h1>
           <p className="mt-4 text-white/70 max-w-md text-sm">
             Sign in to build your competency profile, take AI-generated assessments, and get a personalized learning path
-            linked to iGOT Karmayogi.
+            that complements the iGOT Karmayogi ecosystem.
           </p>
         </div>
-        <p className="text-xs text-white/40">Prototype · Smart India Hackathon · SIH26101</p>
+        <p className="text-xs text-white/40">Team Quest Coders · Smart India Hackathon · SIH26101</p>
       </div>
 
       {/* form */}
@@ -118,10 +118,13 @@ export default function Login() {
                 <Field label="I am a">
                   <select className="inp" value={f.role} onChange={upd('role')}>
                     <option value="learner">Learner / Statistical Officer</option>
-                    <option value="officer">Training Manager / Nodal Officer</option>
+                    <option value="manager">Training Manager / Nodal Officer</option>
                   </select>
                 </Field>
-                {f.role === 'officer' && (
+                <p className="text-[11px] text-slate-400 -mt-2">
+                  Admin accounts are provisioned separately and can't be self-registered.
+                </p>
+                {f.role === 'manager' && (
                   <Field label="Department">
                     <select className="inp" value={f.department} onChange={upd('department')}>
                       {DEPARTMENTS.map((d) => (
@@ -171,8 +174,11 @@ export default function Login() {
               <button type="button" className="btn-ghost flex-1 text-xs" onClick={() => fillDemo('learner')}>
                 Learner
               </button>
-              <button type="button" className="btn-ghost flex-1 text-xs" onClick={() => fillDemo('officer')}>
-                Training Officer
+              <button type="button" className="btn-ghost flex-1 text-xs" onClick={() => fillDemo('manager')}>
+                Manager
+              </button>
+              <button type="button" className="btn-ghost flex-1 text-xs" onClick={() => fillDemo('admin')}>
+                Admin
               </button>
             </div>
             <p className="text-[11px] text-slate-400 mt-2">Password is prefilled — just press Sign in.</p>

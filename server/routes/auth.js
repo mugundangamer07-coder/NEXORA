@@ -11,7 +11,8 @@ r.post('/register', (req, res) => {
   let { email, password, name, role, department } = req.body || {}
   email = String(email || '').trim()
   name = String(name || '').trim()
-  role = role === 'officer' ? 'officer' : 'learner'
+  // Admin accounts are provisioned, not self-registered — never trust a client-supplied 'admin'.
+  role = role === 'manager' ? 'manager' : 'learner'
   if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'Enter a valid email address' })
   if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' })
   if (name.length < 2) return res.status(400).json({ error: 'Enter your name' })

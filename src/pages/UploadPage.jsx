@@ -3,16 +3,18 @@ import { useNavigate } from 'react-router-dom'
 import { Upload, FileText, Loader2, ScanSearch, ArrowRight } from 'lucide-react'
 import { useApp } from '../context/AppState.jsx'
 import { extractPdfText } from '../lib/pdf.js'
-import { analyzeDocument, generateQuiz, hasLiveAI } from '../lib/gemini.js'
+import { analyzeDocument, generateQuiz, hasLiveAI, uploadMaterial } from '../lib/gemini.js'
 import { SAMPLE_DOCUMENT } from '../data/sampleAnalysis.js'
 import { Card, SectionTitle, Pill, Fade } from '../components/ui.jsx'
 
 const STAGES = {
   idle: '',
   reading: 'Extracting text from the document…',
+  uploading: 'Uploading and validating your file…',
   analyzing: 'AI is analyzing your learning material…',
   generating: 'AI is generating your assessment…',
 }
+const MAX_MB = 10
 
 export default function UploadPage() {
   const { state, setLocal, resetJourney } = useApp()
@@ -29,6 +31,18 @@ export default function UploadPage() {
     setError('')
     resetJourney()
     setFileName(file.name)
+
+    // Client-side pre-checks (fast feedback) — the server re-validates both, since
+    // a client check can always be bypassed.
+    if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+      setError('Only PDF files are supported in this prototype.')
+      return
+    }
+    if (file.size > MAX_MB * 1024 * 1024) {
+      setError(`That file is larger than the ${MAX_MB}MB limit for this prototype.`)
+      return
+    }
+
     try {
       setStage('reading')
       const { text: raw } = await extractPdfText(file)
@@ -38,13 +52,17 @@ export default function UploadPage() {
         return
       }
       setText(raw)
+
+      setStage('uploading')
+      const uploaded = await uploadMaterial(file) // real, validated file upload -> materials table
+
       setStage('analyzing')
-      const map = await analyzeDocument(raw, file.name)
-      setLocal({ documentName: file.name, topicMap: map })
+      const map = await analyzeDocument(raw, file.name, uploaded.materialId)
+      setLocal({ documentName: file.name, materialId: uploaded.materialId, topicMap: map })
       setStage('idle')
     } catch (e) {
       console.error(e)
-      setError('Something went wrong reading that PDF. Try another file or load the sample document.')
+      setError(e.message || 'Something went wrong reading that PDF. Try another file or load the sample document.')
       setStage('idle')
     }
   }
@@ -55,8 +73,10 @@ export default function UploadPage() {
     setFileName(SAMPLE_DOCUMENT.name)
     setText('')
     setStage('analyzing')
-    const map = await analyzeDocument('', SAMPLE_DOCUMENT.name)
-    setLocal({ documentName: SAMPLE_DOCUMENT.name, topicMap: map })
+    // No real file for the bundled sample, so there's nothing to persist as a
+    // "material" — the offline demo mode doesn't need one to work end to end.
+    const map = await analyzeDocument('', SAMPLE_DOCUMENT.name, null)
+    setLocal({ documentName: SAMPLE_DOCUMENT.name, materialId: null, topicMap: map })
     setStage('idle')
   }
 
@@ -64,7 +84,7 @@ export default function UploadPage() {
     setStage('generating')
     setError('')
     try {
-      const { questions, source } = await generateQuiz(text, count, topicMap)
+      const { questions, source } = await generateQuiz(text, count, topicMap, state.materialId)
       if (!questions.length) {
         setError('Question generation returned nothing. Try the sample document.')
         setStage('idle')

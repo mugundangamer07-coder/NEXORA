@@ -1,11 +1,11 @@
 import { Router } from 'express'
-import { requireAuth, requireOfficer } from '../auth.js'
+import { requireAuth, requireManager } from '../auth.js'
 import { db } from '../db.js'
 import { COMPETENCY_ORDER, labelFor } from '../../src/data/competencyFramework.js'
 
 const r = Router()
 
-r.get('/org', requireAuth, requireOfficer, (_req, res) => {
+r.get('/org', requireAuth, requireManager, (_req, res) => {
   const learners = db.prepare("SELECT id, name, department FROM users WHERE role = 'learner'").all()
   const profRows = db.prepare('SELECT user_id, competency, score FROM profile').all()
   const assessCounts = Object.fromEntries(

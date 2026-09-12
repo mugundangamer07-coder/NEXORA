@@ -7,6 +7,7 @@ const AppStateContext = createContext(null)
 // transient = client-only journey state (not persisted anywhere)
 const transient = {
   documentName: null,
+  materialId: null, // the persisted materials.id once the file is uploaded
   topicMap: null,
   quiz: null, // { questions, count, source }
   answers: {},
@@ -119,10 +120,10 @@ export function AppStateProvider({ children }) {
   }, [])
 
   const submitAssessment = useCallback(
-    async ({ documentName, source, questions, answers }) => {
+    async ({ documentName, source, questions, answers, materialId }) => {
       const d = await apiFetch('/assessments', {
         method: 'POST',
-        body: { documentName, source, questions, answers },
+        body: { documentName, source, questions, answers, materialId },
       })
       applyServerState(d)
       return d

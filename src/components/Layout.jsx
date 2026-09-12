@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, Upload, BarChart3, GraduationCap, Building2, Sparkles, LogOut } from 'lucide-react'
+import { LayoutDashboard, Upload, BarChart3, GraduationCap, Building2, ShieldCheck, Sparkles, LogOut } from 'lucide-react'
 import { useApp } from '../context/AppState.jsx'
 import { BrandMark } from './ui.jsx'
 
@@ -9,12 +9,18 @@ const learnerNav = [
   { to: '/results', label: 'Results', icon: BarChart3 },
   { to: '/path', label: 'Learning Path', icon: GraduationCap },
 ]
-const officerNav = [{ to: '/admin', label: 'Org Dashboard', icon: Building2 }, ...learnerNav]
+const managerNav = [{ to: '/manager', label: 'Org Dashboard', icon: Building2 }]
+const adminNav = [
+  { to: '/admin', label: 'Admin', icon: ShieldCheck },
+  { to: '/manager', label: 'Org Dashboard', icon: Building2 },
+]
+const NAV_BY_ROLE = { learner: learnerNav, manager: managerNav, admin: adminNav }
+const ROLE_LABEL = { learner: 'Learner', manager: 'Training Manager', admin: 'Admin' }
 
 export default function Layout({ children }) {
   const { state, logout } = useApp()
   const nav = useNavigate()
-  const items = state.user?.role === 'officer' ? officerNav : learnerNav
+  const items = NAV_BY_ROLE[state.user?.role] || learnerNav
 
   function doLogout() {
     logout()
@@ -66,7 +72,7 @@ export default function Layout({ children }) {
                 <div className="hidden sm:block text-right leading-tight">
                   <div className="text-xs font-semibold">{state.user.name}</div>
                   <div className="text-[10px] text-white/50 capitalize">
-                    {state.user.role === 'officer' ? 'Training Officer' : 'Learner'}
+                    {ROLE_LABEL[state.user.role] || state.user.role}
                   </div>
                 </div>
                 <button

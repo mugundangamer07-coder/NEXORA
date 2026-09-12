@@ -1,6 +1,13 @@
 import { Router } from 'express'
 import { requireAuth } from '../auth.js'
-import { getProfile, upsertProfile, getHistory, insertAssessment, latestResult } from '../db.js'
+import {
+  getProfile,
+  upsertProfile,
+  getHistory,
+  insertAssessment,
+  latestResult,
+  saveRecommendationSnapshot,
+} from '../db.js'
 import { scoreQuiz, mergeProfile } from '../../src/lib/scoring.js'
 import { buildLearningPath } from '../../src/lib/learningPath.js'
 import { recommendTraining } from '../../src/lib/recommend.js'
@@ -10,7 +17,7 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 
 const isFullResult = (x) => x && Array.isArray(x.perTopic) && Array.isArray(x.gaps) && x.perTopic.length > 0
 
-async function bundle(userId, result, profile) {
+export async function buildDashboardBundle(userId, result, profile) {
   const usable = isFullResult(result) ? result : null
   const learningPath = usable ? buildLearningPath(usable, profile) : null
   const recommendations = usable ? await recommendTraining(usable, profile) : null
@@ -24,27 +31,34 @@ r.get(
   wrap(async (req, res) => {
     const profile = getProfile(req.user.id)
     const result = latestResult(req.user.id)
-    res.json(await bundle(req.user.id, result, profile))
+    res.json(await buildDashboardBundle(req.user.id, result, profile))
   }),
 )
 
-// body: { documentName, source, questions:[...], answers:{id:idx} }
+// body: { documentName, source, questions:[...], answers:{id:idx}, materialId? }
 r.post(
   '/',
   requireAuth,
   wrap(async (req, res) => {
-    const { documentName, source, questions, answers } = req.body || {}
+    const { documentName, source, questions, answers, materialId } = req.body || {}
     if (!Array.isArray(questions) || !questions.length || typeof answers !== 'object' || !answers) {
       return res.status(400).json({ error: 'questions and answers are required' })
     }
-    const result = scoreQuiz(questions, answers) // authoritative scoring, server-side
+    const result = scoreQuiz(questions, answers) // authoritative scoring, server-side — never AI-decided
     const prev = getProfile(req.user.id)
     const profile = mergeProfile(prev, result)
 
-    insertAssessment(req.user.id, { documentName, source, result })
+    const assessmentId = insertAssessment(req.user.id, {
+      documentName,
+      source,
+      result,
+      materialId: materialId ? Number(materialId) : null,
+    })
     upsertProfile(req.user.id, profile)
 
-    res.json(await bundle(req.user.id, result, profile))
+    const bundle = await buildDashboardBundle(req.user.id, result, profile)
+    saveRecommendationSnapshot(req.user.id, assessmentId, bundle.recommendations)
+    res.json({ ...bundle, assessmentId })
   }),
 )
 

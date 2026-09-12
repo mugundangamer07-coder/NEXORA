@@ -22,6 +22,23 @@ function model() {
 }
 const clip = (t, n = 12000) => (t || '').slice(0, n)
 
+// Gemini occasionally returns malformed/truncated JSON. Retry once before we
+// give up and fall back to the offline sample — never let a bad AI response
+// crash the request.
+async function callGeminiJSON(prompt, attempts = 2) {
+  let lastErr
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await model().generateContent(prompt)
+      return JSON.parse(res.response.text())
+    } catch (e) {
+      lastErr = e
+      console.warn(`[gemini] attempt ${i + 1}/${attempts} failed:`, e.message)
+    }
+  }
+  throw lastErr
+}
+
 export async function analyzeDocument(text, documentName) {
   if (!KEY || !text) {
     return { ...SAMPLE_TOPIC_MAP, documentName: documentName || SAMPLE_TOPIC_MAP.documentName, source: 'offline' }
@@ -36,8 +53,7 @@ Analyse the learning material below and return JSON with this exact shape:
 Pick 3 to 6 topics. Map each to the closest id from: ${HINT}.
 MATERIAL:
 """${clip(text)}"""`
-    const res = await model().generateContent(prompt)
-    const data = JSON.parse(res.response.text())
+    const data = await callGeminiJSON(prompt)
     const topics = (data.topics || [])
       .filter((t) => IDS.includes(t.id))
       .map((t) => ({
@@ -104,8 +120,7 @@ Rules: mix difficulties, spread across the listed topics, base every question on
 no "all of the above", keep options plausible.
 MATERIAL:
 """${clip(text)}"""`
-    const res = await model().generateContent(prompt)
-    const data = JSON.parse(res.response.text())
+    const data = await callGeminiJSON(prompt)
     const questions = normalize(data.questions).slice(0, count)
     if (questions.length < Math.min(count, 5)) throw new Error('too few valid questions')
     return { questions, source: 'live' }

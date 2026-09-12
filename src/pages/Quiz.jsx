@@ -34,6 +34,7 @@ export default function Quiz() {
         source: quiz.source,
         questions: quiz.questions,
         answers,
+        materialId: state.materialId,
       })
       nav('/results')
     } catch (e) {

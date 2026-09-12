@@ -23,9 +23,18 @@ export function requireAuth(req, res, next) {
   }
 }
 
-export function requireOfficer(req, res, next) {
-  if (req.user?.role !== 'officer') return res.status(403).json({ error: 'Training-officer access only' })
-  next()
+// Roles: 'learner' (the officer/trainee taking assessments), 'manager'
+// (training manager — organization analytics), 'admin' (system administrator).
+export function requireRole(...roles) {
+  return (req, res, next) => {
+    if (!roles.includes(req.user?.role)) {
+      return res.status(403).json({ error: `Requires one of: ${roles.join(', ')}` })
+    }
+    next()
+  }
 }
+
+export const requireManager = requireRole('manager', 'admin')
+export const requireAdmin = requireRole('admin')
 
 export { publicUser }
