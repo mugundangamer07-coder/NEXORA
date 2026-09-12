@@ -1,0 +1,18 @@
+# Render "Blueprint" — lets Render read this file and pre-fill a new Web
+# Service automatically. See the deploy guide (NEXORA Operating Kit PDF) for
+# the exact click-by-click steps.
+services:
+  - type: web
+    name: nexora
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 22.13.0
+      - key: JWT_SECRET
+        generateValue: true
+      - key: GEMINI_API_KEY
+        sync: false
