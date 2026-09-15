@@ -21,6 +21,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const PORT = process.env.PORT && process.env.PORT !== '5173' ? process.env.PORT : 3001
 
 const app = express()
+// Both Vercel and Render sit in front of the app as a reverse proxy — without
+// this, req.ip is the proxy's own address (wrong for rate limiting) and
+// express-rate-limit logs a validation warning on every single request.
+app.set('trust proxy', 1)
 app.use(cors())
 app.use(express.json({ limit: '2mb' }))
 

@@ -125,10 +125,20 @@ CREATE TABLE IF NOT EXISTS learning_progress (
 // Schema creation + seeding must finish before any request touches the
 // database. This is memoized per process, so a warm serverless instance
 // only pays for it once; a cold one pays for it on its first request
-// (wired up as Express middleware in server/index.js).
+// (wired up as Express middleware in server/index.js). If init() ever
+// fails (e.g. a transient network blip to a hosted database, or two cold
+// starts racing to seed the same shared DB at once), the failure must NOT
+// be cached forever — otherwise that one instance would fail every request
+// for its entire lifetime. Resetting readyPromise on failure lets the next
+// request retry cleanly.
 let readyPromise = null
 export function ensureReady() {
-  if (!readyPromise) readyPromise = init()
+  if (!readyPromise) {
+    readyPromise = init().catch((err) => {
+      readyPromise = null
+      throw err
+    })
+  }
   return readyPromise
 }
 
@@ -402,6 +412,23 @@ export async function seedIfEmpty() {
   const n = (await client.execute('SELECT COUNT(*) c FROM users')).rows[0][0]
   if (n > 0) return
 
+  try {
+    await runSeed()
+  } catch (e) {
+    // On a shared hosted database, two serverless cold starts can both see
+    // "0 users" and race to seed at once — the loser hits a UNIQUE
+    // constraint violation on email, not a real failure. Treat it as
+    // "someone else already seeded" instead of poisoning this request.
+    const msg = String(e?.message || '')
+    if (e?.code === 'SQLITE_CONSTRAINT' || /UNIQUE constraint/i.test(msg)) {
+      console.warn('[db] seed race detected — another instance already seeded, continuing')
+      return
+    }
+    throw e
+  }
+}
+
+async function runSeed() {
   const now = new Date().toISOString()
 
   // 1 admin + 1 training manager + 1 primary learner + a demo cohort
