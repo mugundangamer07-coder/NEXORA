@@ -6,8 +6,9 @@ import { useApp } from '../context/AppState.jsx'
 import { COMPETENCY_ORDER, labelFor } from '../data/competencyFramework.js'
 import { bandFor } from '../lib/scoring.js'
 import {
-  Card, CardHead, SectionTitle, ProgressRing, TopicBar, Pill, Dot, Legend, Sparkline, bandHex,
+  Card, CardHead, SectionTitle, ProgressRing, Pill, Dot, Legend, bandHex,
 } from '../components/ui.jsx'
+import { CompetencyBarChart, ProgressLineChart } from '../components/charts.jsx'
 import CompetencyGraph from '../components/CompetencyGraph.jsx'
 
 const GRAPH_LEGEND = [
@@ -175,17 +176,15 @@ export default function LearnerDashboard() {
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHead title="Competency by topic" icon={BarGroupIcon} sub={`${rows.length} competencies assessed`} />
-          <BandGroup title="Competency gaps" items={gaps} />
-          <BandGroup title="Moderate" items={moderate} />
-          <BandGroup title="Strong" items={strong} />
+          <CompetencyBarChart rows={rows} />
+          <div className="mt-3">
+            <Legend items={GRAPH_LEGEND.slice(0, 3)} />
+          </div>
         </Card>
 
         <Card>
-          <CardHead
-            title="Progress over time"
-            icon={Activity}
-            right={overallSeries.length >= 2 ? <Sparkline points={overallSeries} color="#4f46e5" /> : null}
-          />
+          <CardHead title="Progress over time" icon={Activity} sub={overallSeries.length >= 2 ? `${overallSeries.length} assessments` : null} />
+          {overallSeries.length >= 2 && <ProgressLineChart history={history} height={140} />}
           {history?.length ? (
             <ul className="divide-y divide-slate-100">
               {[...history]
@@ -239,21 +238,6 @@ export default function LearnerDashboard() {
           <Legend items={GRAPH_LEGEND} />
         </div>
       </Card>
-    </div>
-  )
-}
-
-function BandGroup({ title, items }) {
-  if (!items.length) return null
-  return (
-    <div className="mt-2 first:mt-0">
-      <div className="flex items-center justify-between">
-        <span className="label">{title}</span>
-        <span className="text-[11px] text-slate-400">{items.length}</span>
-      </div>
-      {items.map((r) => (
-        <TopicBar key={r.id} label={r.label} pct={r.pct} band={r.band} showDot />
-      ))}
     </div>
   )
 }

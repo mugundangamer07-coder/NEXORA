@@ -10,4 +10,11 @@ export default defineConfig({
       '/api': 'http://localhost:3001',
     },
   },
+  // So `npm run preview` (a local production-build smoke test) can reach the
+  // API too — `vite preview` doesn't inherit server.proxy.
+  preview: {
+    proxy: {
+      '/api': 'http://localhost:3001',
+    },
+  },
 })

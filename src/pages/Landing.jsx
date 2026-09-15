@@ -1,8 +1,11 @@
-import { Link } from 'react-router-dom'
+import { useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
-  Upload, ScanSearch, ListChecks, Target, Route as RouteIcon, Building2, ArrowRight, ShieldCheck,
+  Upload, ScanSearch, ListChecks, Target, Route as RouteIcon, Building2, ShieldCheck,
+  TrendingUp, ChevronRight, ChevronDown, PlayCircle, Loader2,
 } from 'lucide-react'
+import { useApp } from '../context/AppState.jsx'
 
 const features = [
   { icon: ScanSearch, title: 'AI material analysis', desc: 'Upload a PDF and the AI maps its topics, subtopics, key concepts and difficulty level.' },
@@ -13,17 +16,51 @@ const features = [
   { icon: ShieldCheck, title: 'iGOT Karmayogi ready', desc: 'Recommendation layer designed to plug into the iGOT Karmayogi training ecosystem.' },
 ]
 
-const journey = [
-  'Upload learning material (PDF)',
-  'AI extracts topics & difficulty',
-  'AI generates a tagged quiz',
-  'Learner takes the assessment',
-  'Topic-wise performance analysis',
-  'Competency gaps detected & explained',
-  'Personalized learning path + iGOT training',
+const CYCLE = [
+  { label: 'UPLOAD', icon: Upload, desc: 'Add a learning PDF' },
+  { label: 'ANALYZE', icon: ScanSearch, desc: 'AI extracts topics' },
+  { label: 'ASSESS', icon: ListChecks, desc: 'AI-generated quiz' },
+  { label: 'IDENTIFY', icon: Target, desc: 'Competency gaps found' },
+  { label: 'PERSONALIZE', icon: RouteIcon, desc: 'Tailored learning path' },
+  { label: 'IMPROVE', icon: TrendingUp, desc: 'Re-assess & track growth' },
 ]
 
+function CycleDiagram() {
+  return (
+    <div className="mt-10 flex flex-col sm:flex-row sm:flex-wrap items-center justify-center gap-1">
+      {CYCLE.map((step, i) => (
+        <div key={step.label} className="flex flex-col sm:flex-row items-center">
+          <div className="flex flex-col items-center text-center w-36 py-2">
+            <div className="grid place-items-center w-14 h-14 rounded-2xl bg-white/10 border border-white/15 text-accent-100">
+              <step.icon size={22} />
+            </div>
+            <div className="mt-2.5 text-xs font-extrabold tracking-wider text-white">{step.label}</div>
+            <div className="text-[11px] text-white/50 mt-0.5">{step.desc}</div>
+          </div>
+          {i < CYCLE.length - 1 && (
+            <div className="text-white/25 shrink-0">
+              <ChevronDown size={18} className="sm:hidden" />
+              <ChevronRight size={18} className="hidden sm:block" />
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export default function Landing() {
+  const { login } = useApp()
+  const nav = useNavigate()
+  const [demoBusy, setDemoBusy] = useState(false)
+
+  async function viewDemo() {
+    setDemoBusy(true)
+    const res = await login('learner@nexora.gov.in', 'demo1234')
+    setDemoBusy(false)
+    if (res.ok) nav('/dashboard')
+  }
+
   return (
     <div>
       <section className="bg-ink-900 text-white">
@@ -32,25 +69,31 @@ export default function Landing() {
             <span className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-white/80">
               Capacity building for India's Official Statistical System
             </span>
-            <h1 className="mt-5 text-4xl md:text-5xl font-extrabold leading-tight max-w-3xl">
-              AI competency intelligence that turns any learning material into a personalized training plan.
-            </h1>
-            <p className="mt-3 text-accent-100 font-semibold tracking-wide text-sm uppercase">
+            <h1 className="mt-5 text-4xl md:text-5xl font-extrabold leading-tight max-w-3xl">NEXORA</h1>
+            <p className="mt-2 text-accent-100 font-semibold tracking-wide text-sm uppercase">
               From Learning Material to Measurable Competency
             </p>
             <p className="mt-5 text-white/70 text-lg max-w-2xl">
-              NEXORA identifies competency gaps, generates assessments from uploaded documents, and recommends
-              personalized training that complements the iGOT Karmayogi ecosystem — it does not replace it.
+              AI-powered competency intelligence that transforms learning material into personalized training paths —
+              built to complement the iGOT Karmayogi ecosystem, not replace it.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Link to="/upload" className="btn-primary text-base px-5 py-3">
-                <Upload size={18} /> Upload material & start
+                <Upload size={18} /> Try NEXORA
               </Link>
-              <Link to="/dashboard" className="btn-ghost text-base px-5 py-3 bg-white/10 border-white/20 text-white hover:bg-white/20">
-                View learner dashboard <ArrowRight size={18} />
-              </Link>
+              <button
+                type="button"
+                onClick={viewDemo}
+                disabled={demoBusy}
+                className="btn-ghost text-base px-5 py-3 bg-white/10 border-white/20 text-white hover:bg-white/20"
+              >
+                {demoBusy ? <Loader2 size={18} className="animate-spin" /> : <PlayCircle size={18} />}
+                View Demo
+              </button>
             </div>
           </motion.div>
+
+          <CycleDiagram />
         </div>
       </section>
 
@@ -77,17 +120,8 @@ export default function Landing() {
       </section>
 
       <section className="bg-white border-y border-slate-100">
-        <div className="mx-auto max-w-7xl px-4 py-14">
-          <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500">The learner journey</h2>
-          <div className="mt-6 grid gap-3 md:grid-cols-7 sm:grid-cols-2">
-            {journey.map((step, i) => (
-              <div key={i} className="rounded-xl border border-slate-200 p-3">
-                <div className="text-xs font-bold text-brand-700">Step {i + 1}</div>
-                <div className="mt-1 text-sm font-medium text-ink-900">{step}</div>
-              </div>
-            ))}
-          </div>
-          <p className="mt-6 text-xs text-slate-400">
+        <div className="mx-auto max-w-7xl px-4 py-10">
+          <p className="text-xs text-slate-400 text-center">
             This prototype runs the full pipeline end to end. Topic extraction and question generation use Google Gemini
             when an API key is configured, with a bundled offline sample so the demo always works.
           </p>
@@ -96,9 +130,15 @@ export default function Landing() {
 
       <section className="mx-auto max-w-7xl px-4 py-16 text-center">
         <h2 className="text-2xl font-extrabold text-ink-900">Ready to see your competency map?</h2>
-        <Link to="/upload" className="btn-primary mt-6 text-base px-6 py-3 inline-flex">
-          <Upload size={18} /> Start the assessment
-        </Link>
+        <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+          <Link to="/upload" className="btn-primary text-base px-6 py-3">
+            <Upload size={18} /> Try NEXORA
+          </Link>
+          <button type="button" onClick={viewDemo} disabled={demoBusy} className="btn-ghost text-base px-6 py-3">
+            {demoBusy ? <Loader2 size={18} className="animate-spin" /> : <PlayCircle size={18} />}
+            View Demo
+          </button>
+        </div>
         <p className="mt-10 text-xs text-slate-400">
           NEXORA · Team Quest Coders · Smart India Hackathon (SIH26101) · Built to complement, not replace, iGOT Karmayogi.
         </p>

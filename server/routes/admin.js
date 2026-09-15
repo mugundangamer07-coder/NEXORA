@@ -11,7 +11,7 @@ r.get(
   '/stats',
   requireAuth,
   requireAdmin,
-  wrap(async (_req, res) => res.json(getAdminStats())),
+  wrap(async (_req, res) => res.json(await getAdminStats())),
 )
 
 export default r

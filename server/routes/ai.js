@@ -7,10 +7,10 @@ import { getMaterialById, saveMaterialAnalysis, insertQuestions } from '../db.js
 const r = Router()
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next)
 
-function ownedMaterialOr400(req, res) {
+async function ownedMaterialOr400(req, res) {
   const { materialId } = req.body || {}
   if (!materialId) return null
-  const m = getMaterialById(Number(materialId))
+  const m = await getMaterialById(Number(materialId))
   if (!m || m.user_id !== req.user.id) {
     res.status(404).json({ error: 'Material not found' })
     return undefined // signal "already responded"
@@ -27,23 +27,23 @@ r.post(
   '/analyze',
   requireAuth,
   wrap(async (req, res) => {
-    const material = ownedMaterialOr400(req, res)
+    const material = await ownedMaterialOr400(req, res)
     if (material === undefined) return
     const { text, documentName } = req.body || {}
     const map = await analyzeDocument(String(text || ''), documentName || material?.original_name)
-    if (material) saveMaterialAnalysis(material.id, { extractedText: text, topicMap: map, aiSource: map.source })
+    if (material) await saveMaterialAnalysis(material.id, { extractedText: text, topicMap: map, aiSource: map.source })
     res.json(map)
   }),
 )
 
 // body: { text, count, topicIds, materialId? }
 async function generateQuestionsHandler(req, res) {
-  const material = ownedMaterialOr400(req, res)
+  const material = await ownedMaterialOr400(req, res)
   if (material === undefined) return
   const { text, count, topicIds } = req.body || {}
   const n = [5, 10, 20].includes(Number(count)) ? Number(count) : 10
   const out = await generateQuiz(String(text || ''), n, Array.isArray(topicIds) ? topicIds : [])
-  if (material) insertQuestions(material.id, out.questions, out.source)
+  if (material) await insertQuestions(material.id, out.questions, out.source)
   res.json(out)
 }
 r.post('/generate-questions', requireAuth, wrap(generateQuestionsHandler))

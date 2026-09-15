@@ -1,4 +1,5 @@
-import { DatabaseSync } from 'node:sqlite'
+import { createClient } from '@libsql/client'
+import { tmpdir } from 'node:os'
 import { mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -9,43 +10,55 @@ import { SAMPLE_QUESTION_BANK, SAMPLE_DOCUMENT } from '../src/data/sampleAnalysi
 import { scoreQuiz, mergeProfile } from '../src/lib/scoring.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const DB_PATH = process.env.NEXORA_DB || join(__dirname, '..', 'data', 'nexora.db')
-mkdirSync(dirname(DB_PATH), { recursive: true })
 
-export const UPLOAD_DIR = process.env.NEXORA_UPLOADS || join(__dirname, '..', 'data', 'uploads')
-mkdirSync(UPLOAD_DIR, { recursive: true })
-
-export const db = new DatabaseSync(DB_PATH)
-db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;')
-
-// node:sqlite has no .transaction() helper — provide a small nest-safe one.
-let _inTx = false
-export function tx(fn) {
-  if (_inTx) return fn()
-  _inTx = true
-  db.exec('BEGIN')
-  try {
-    const out = fn()
-    db.exec('COMMIT')
-    return out
-  } catch (e) {
-    db.exec('ROLLBACK')
-    throw e
-  } finally {
-    _inTx = false
-  }
+// Local dev / Render: a real file on persistent disk (unchanged behaviour).
+// Vercel with a hosted database configured: libSQL speaks the Turso wire
+// protocol directly, so TURSO_DATABASE_URL/TURSO_AUTH_TOKEN just work.
+// Vercel with nothing configured: fall back to a /tmp file so the process
+// doesn't crash (Vercel's filesystem is read-only outside /tmp) — this keeps
+// the bundled demo working, but writes don't survive a cold start until a
+// real TURSO_DATABASE_URL is set. isEphemeral reflects that to callers.
+function resolveDbUrl() {
+  if (process.env.TURSO_DATABASE_URL) return process.env.TURSO_DATABASE_URL
+  if (process.env.VERCEL) return `file:${join(tmpdir(), 'nexora.db')}`
+  const localPath = process.env.NEXORA_DB || join(__dirname, '..', 'data', 'nexora.db')
+  mkdirSync(dirname(localPath), { recursive: true })
+  return `file:${localPath}`
 }
 
-db.exec(`
+export const isEphemeral = Boolean(process.env.VERCEL) && !process.env.TURSO_DATABASE_URL
+
+export const client = createClient({
+  url: resolveDbUrl(),
+  authToken: process.env.TURSO_AUTH_TOKEN || undefined,
+})
+
+const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS users (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   email         TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
   name          TEXT NOT NULL,
-  role          TEXT NOT NULL DEFAULT 'learner',   -- 'learner' | 'manager' | 'admin'
+  role          TEXT NOT NULL DEFAULT 'learner',
   department    TEXT,
   created_at    TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS materials (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  original_name   TEXT NOT NULL,
+  stored_filename TEXT NOT NULL,
+  mime_type       TEXT NOT NULL,
+  size_bytes      INTEGER NOT NULL,
+  extracted_text  TEXT,
+  topics_json     TEXT,
+  ai_source       TEXT,
+  status          TEXT NOT NULL DEFAULT 'uploaded',
+  created_at      TEXT NOT NULL,
+  analyzed_at     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_materials_user ON materials(user_id, created_at);
 
 CREATE TABLE IF NOT EXISTS assessments (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,26 +82,6 @@ CREATE TABLE IF NOT EXISTS profile (
   PRIMARY KEY (user_id, competency)
 );
 
--- An uploaded learning document. Raw bytes live on disk (UPLOAD_DIR);
--- this row is the record of it plus whatever the AI step has learned so far.
-CREATE TABLE IF NOT EXISTS materials (
-  id              INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  original_name   TEXT NOT NULL,
-  stored_filename TEXT NOT NULL,
-  mime_type       TEXT NOT NULL,
-  size_bytes      INTEGER NOT NULL,
-  extracted_text  TEXT,
-  topics_json     TEXT,          -- the AI (or offline) topic map, once analyzed
-  ai_source       TEXT,          -- 'live' | 'offline'
-  status          TEXT NOT NULL DEFAULT 'uploaded',  -- uploaded | analyzed
-  created_at      TEXT NOT NULL,
-  analyzed_at     TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_materials_user ON materials(user_id, created_at);
-
--- MCQs generated for a material — kept for the admin audit trail and so a
--- material's question bank can be inspected without re-calling the AI.
 CREATE TABLE IF NOT EXISTS questions (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   material_id   INTEGER REFERENCES materials(id) ON DELETE CASCADE,
@@ -96,16 +89,14 @@ CREATE TABLE IF NOT EXISTS questions (
   subtopic      TEXT,
   difficulty    TEXT NOT NULL,
   question      TEXT NOT NULL,
-  options_json  TEXT NOT NULL,   -- JSON array of 4 strings
+  options_json  TEXT NOT NULL,
   answer_index  INTEGER NOT NULL,
   explanation   TEXT,
-  source        TEXT,            -- 'live' | 'offline'
+  source        TEXT,
   created_at    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_questions_material ON questions(material_id);
 
--- A snapshot of what was recommended after a given assessment, so managers/
--- admins can see recommendation history instead of only the live ranking.
 CREATE TABLE IF NOT EXISTS recommendations (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -118,93 +109,120 @@ CREATE TABLE IF NOT EXISTS recommendations (
 );
 CREATE INDEX IF NOT EXISTS idx_recommendations_user ON recommendations(user_id, created_at);
 
--- Learner-marked progress against a recommended resource — lets the demo
--- show "recommended -> in progress -> completed" before a re-assessment.
 CREATE TABLE IF NOT EXISTS learning_progress (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   competency     TEXT NOT NULL,
   course_id      TEXT NOT NULL,
   course_title   TEXT NOT NULL,
-  status         TEXT NOT NULL DEFAULT 'recommended', -- recommended | in_progress | completed
+  status         TEXT NOT NULL DEFAULT 'recommended',
   created_at     TEXT NOT NULL,
   updated_at     TEXT NOT NULL,
   UNIQUE(user_id, course_id)
 );
-`)
+`
 
-// ---- one-time, additive migrations for databases created before this schema ----
-try {
-  db.exec("UPDATE users SET role = 'manager' WHERE role = 'officer'")
-} catch {}
-try {
-  db.exec('ALTER TABLE assessments ADD COLUMN material_id INTEGER REFERENCES materials(id) ON DELETE SET NULL')
-} catch {
-  // column already exists on a database created by an earlier version of this file — fine.
+// Schema creation + seeding must finish before any request touches the
+// database. This is memoized per process, so a warm serverless instance
+// only pays for it once; a cold one pays for it on its first request
+// (wired up as Express middleware in server/index.js).
+let readyPromise = null
+export function ensureReady() {
+  if (!readyPromise) readyPromise = init()
+  return readyPromise
+}
+
+async function init() {
+  await client.executeMultiple(SCHEMA_SQL)
+  // one-time, additive migrations for databases created before this schema
+  try {
+    await client.execute("UPDATE users SET role = 'manager' WHERE role = 'officer'")
+  } catch {}
+  try {
+    await client.execute('ALTER TABLE assessments ADD COLUMN material_id INTEGER REFERENCES materials(id) ON DELETE SET NULL')
+  } catch {
+    // column already exists — fine.
+  }
+  await seedIfEmpty()
 }
 
 /* --------------------------------------------------------------- helpers */
 
-export function createUser({ email, password, name, role = 'learner', department = null }) {
+export async function createUser({ email, password, name, role = 'learner', department = null }) {
   const hash = bcrypt.hashSync(password, 10)
-  const info = db
-    .prepare('INSERT INTO users (email, password_hash, name, role, department, created_at) VALUES (?,?,?,?,?,?)')
-    .run(email.toLowerCase().trim(), hash, name.trim(), role, department, new Date().toISOString())
-  return getUserById(info.lastInsertRowid)
+  const rs = await client.execute({
+    sql: 'INSERT INTO users (email, password_hash, name, role, department, created_at) VALUES (?,?,?,?,?,?)',
+    args: [email.toLowerCase().trim(), hash, name.trim(), role, department, new Date().toISOString()],
+  })
+  return getUserById(Number(rs.lastInsertRowid))
 }
-export const getUserByEmail = (email) =>
-  db.prepare('SELECT * FROM users WHERE email = ?').get(String(email).toLowerCase().trim())
-export const getUserById = (id) => db.prepare('SELECT * FROM users WHERE id = ?').get(id)
+export async function getUserByEmail(email) {
+  const rs = await client.execute({ sql: 'SELECT * FROM users WHERE email = ?', args: [String(email).toLowerCase().trim()] })
+  return rs.rows[0] ? rowToObj(rs.rows[0], rs.columns) : null
+}
+export async function getUserById(id) {
+  const rs = await client.execute({ sql: 'SELECT * FROM users WHERE id = ?', args: [id] })
+  return rs.rows[0] ? rowToObj(rs.rows[0], rs.columns) : null
+}
+
+// libSQL Row objects don't spread/serialize cleanly as plain objects — this
+// gives every caller a normal JS object keyed by column name.
+function rowToObj(row, columns) {
+  const obj = {}
+  columns.forEach((c, i) => (obj[c] = row[i]))
+  return obj
+}
+function rowsToObjs(rs) {
+  return rs.rows.map((r) => rowToObj(r, rs.columns))
+}
 
 export function publicUser(u) {
   if (!u) return null
   return { id: u.id, email: u.email, name: u.name, role: u.role, department: u.department }
 }
 
-export function getProfile(userId) {
-  const rows = db.prepare('SELECT competency, score FROM profile WHERE user_id = ?').all(userId)
-  return Object.fromEntries(rows.map((r) => [r.competency, r.score]))
+export async function getProfile(userId) {
+  const rs = await client.execute({ sql: 'SELECT competency, score FROM profile WHERE user_id = ?', args: [userId] })
+  return Object.fromEntries(rowsToObjs(rs).map((r) => [r.competency, r.score]))
 }
 
-export function upsertProfile(userId, profileObj) {
+export async function upsertProfile(userId, profileObj) {
   const now = new Date().toISOString()
-  const stmt = db.prepare(
-    `INSERT INTO profile (user_id, competency, score, updated_at) VALUES (?,?,?,?)
-     ON CONFLICT(user_id, competency) DO UPDATE SET score = excluded.score, updated_at = excluded.updated_at`,
+  const entries = Object.entries(profileObj)
+  if (!entries.length) return
+  await client.batch(
+    entries.map(([competency, score]) => ({
+      sql: `INSERT INTO profile (user_id, competency, score, updated_at) VALUES (?,?,?,?)
+            ON CONFLICT(user_id, competency) DO UPDATE SET score = excluded.score, updated_at = excluded.updated_at`,
+      args: [userId, competency, Math.round(score), now],
+    })),
+    'write',
   )
-  tx(() => {
-    for (const [competency, score] of Object.entries(profileObj)) {
-      stmt.run(userId, competency, Math.round(score), now)
-    }
+}
+
+export async function getHistory(userId, limit = 25) {
+  const rs = await client.execute({
+    sql: `SELECT id, document_name, overall, correct_count, total_questions, source, taken_at
+          FROM assessments WHERE user_id = ? ORDER BY taken_at ASC LIMIT ?`,
+    args: [userId, limit],
   })
+  return rowsToObjs(rs).map((r) => ({
+    id: r.id,
+    documentName: r.document_name,
+    overall: r.overall,
+    correctCount: r.correct_count,
+    totalQuestions: r.total_questions,
+    source: r.source,
+    takenAt: r.taken_at,
+  }))
 }
 
-export function getHistory(userId, limit = 25) {
-  return db
-    .prepare(
-      `SELECT id, document_name, overall, correct_count, total_questions, source, taken_at
-       FROM assessments WHERE user_id = ? ORDER BY taken_at ASC LIMIT ?`,
-    )
-    .all(userId, limit)
-    .map((r) => ({
-      id: r.id,
-      documentName: r.document_name,
-      overall: r.overall,
-      correctCount: r.correct_count,
-      totalQuestions: r.total_questions,
-      source: r.source,
-      takenAt: r.taken_at,
-    }))
-}
-
-export function insertAssessment(userId, { documentName, source, result, materialId = null }) {
-  const info = db
-    .prepare(
-      `INSERT INTO assessments
-       (user_id, material_id, document_name, overall, correct_count, total_questions, source, result_json, taken_at)
-       VALUES (?,?,?,?,?,?,?,?,?)`,
-    )
-    .run(
+export async function insertAssessment(userId, { documentName, source, result, materialId = null }) {
+  const rs = await client.execute({
+    sql: `INSERT INTO assessments
+          (user_id, material_id, document_name, overall, correct_count, total_questions, source, result_json, taken_at)
+          VALUES (?,?,?,?,?,?,?,?,?)`,
+    args: [
       userId,
       materialId,
       documentName || null,
@@ -214,48 +232,51 @@ export function insertAssessment(userId, { documentName, source, result, materia
       source || null,
       JSON.stringify(result),
       result.takenAt || new Date().toISOString(),
-    )
-  return info.lastInsertRowid
+    ],
+  })
+  return Number(rs.lastInsertRowid)
 }
 
-export function latestResult(userId) {
-  const row = db
-    .prepare('SELECT result_json FROM assessments WHERE user_id = ? ORDER BY taken_at DESC LIMIT 1')
-    .get(userId)
-  return row ? JSON.parse(row.result_json) : null
+export async function latestResult(userId) {
+  const rs = await client.execute({
+    sql: 'SELECT result_json FROM assessments WHERE user_id = ? ORDER BY taken_at DESC LIMIT 1',
+    args: [userId],
+  })
+  return rs.rows[0] ? JSON.parse(rs.rows[0][0]) : null
 }
 
 /* --------------------------------------------------------------- materials */
 
-export function insertMaterial(userId, { originalName, storedFilename, mimeType, sizeBytes }) {
-  const info = db
-    .prepare(
-      `INSERT INTO materials (user_id, original_name, stored_filename, mime_type, size_bytes, status, created_at)
-       VALUES (?,?,?,?,?,'uploaded',?)`,
-    )
-    .run(userId, originalName, storedFilename, mimeType, sizeBytes, new Date().toISOString())
-  return getMaterialById(info.lastInsertRowid)
+export async function insertMaterial(userId, { originalName, storedFilename, mimeType, sizeBytes }) {
+  const rs = await client.execute({
+    sql: `INSERT INTO materials (user_id, original_name, stored_filename, mime_type, size_bytes, status, created_at)
+          VALUES (?,?,?,?,?,'uploaded',?)`,
+    args: [userId, originalName, storedFilename, mimeType, sizeBytes, new Date().toISOString()],
+  })
+  return getMaterialById(Number(rs.lastInsertRowid))
 }
 
-export const getMaterialById = (id) => db.prepare('SELECT * FROM materials WHERE id = ?').get(id)
-
-export function saveMaterialAnalysis(materialId, { extractedText, topicMap, aiSource }) {
-  db.prepare(
-    `UPDATE materials SET extracted_text = ?, topics_json = ?, ai_source = ?, status = 'analyzed', analyzed_at = ?
-     WHERE id = ?`,
-  ).run(extractedText?.slice(0, 20000) || null, JSON.stringify(topicMap), aiSource, new Date().toISOString(), materialId)
+export async function getMaterialById(id) {
+  const rs = await client.execute({ sql: 'SELECT * FROM materials WHERE id = ?', args: [id] })
+  return rs.rows[0] ? rowToObj(rs.rows[0], rs.columns) : null
 }
 
-export function listMaterials(userId, { all = false } = {}) {
-  const rows = all
-    ? db
-        .prepare(
-          `SELECT m.*, u.name as owner_name FROM materials m JOIN users u ON u.id = m.user_id
-           ORDER BY m.created_at DESC LIMIT 200`,
-        )
-        .all()
-    : db.prepare('SELECT * FROM materials WHERE user_id = ? ORDER BY created_at DESC LIMIT 100').all(userId)
-  return rows.map((m) => ({
+export async function saveMaterialAnalysis(materialId, { extractedText, topicMap, aiSource }) {
+  await client.execute({
+    sql: `UPDATE materials SET extracted_text = ?, topics_json = ?, ai_source = ?, status = 'analyzed', analyzed_at = ?
+          WHERE id = ?`,
+    args: [extractedText?.slice(0, 20000) || null, JSON.stringify(topicMap), aiSource, new Date().toISOString(), materialId],
+  })
+}
+
+export async function listMaterials(userId, { all = false } = {}) {
+  const rs = all
+    ? await client.execute(
+        `SELECT m.*, u.name as owner_name FROM materials m JOIN users u ON u.id = m.user_id
+         ORDER BY m.created_at DESC LIMIT 200`,
+      )
+    : await client.execute({ sql: 'SELECT * FROM materials WHERE user_id = ? ORDER BY created_at DESC LIMIT 100', args: [userId] })
+  return rowsToObjs(rs).map((m) => ({
     id: m.id,
     ownerName: m.owner_name,
     originalName: m.original_name,
@@ -271,83 +292,89 @@ export function listMaterials(userId, { all = false } = {}) {
 
 /* --------------------------------------------------------------- questions */
 
-export function insertQuestions(materialId, questions, source) {
+export async function insertQuestions(materialId, questions, source) {
+  if (!questions.length) return
   const now = new Date().toISOString()
-  const stmt = db.prepare(
-    `INSERT INTO questions (material_id, topic, subtopic, difficulty, question, options_json, answer_index, explanation, source, created_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?)`,
+  await client.batch(
+    questions.map((q) => ({
+      sql: `INSERT INTO questions (material_id, topic, subtopic, difficulty, question, options_json, answer_index, explanation, source, created_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      args: [materialId, q.topic, q.subtopic || null, q.difficulty, q.question, JSON.stringify(q.options), q.answer, q.explanation || null, source, now],
+    })),
+    'write',
   )
-  tx(() => {
-    for (const q of questions) {
-      stmt.run(materialId, q.topic, q.subtopic || null, q.difficulty, q.question, JSON.stringify(q.options), q.answer, q.explanation || null, source, now)
-    }
-  })
 }
 
-export const countQuestions = () => db.prepare('SELECT COUNT(*) c FROM questions').get().c
+export async function countQuestions() {
+  const rs = await client.execute('SELECT COUNT(*) c FROM questions')
+  return rs.rows[0][0]
+}
 
 /* ---------------------------------------------------------- recommendations */
 
-export function saveRecommendationSnapshot(userId, assessmentId, recommendations) {
+export async function saveRecommendationSnapshot(userId, assessmentId, recommendations) {
+  if (!recommendations?.length) return
   const now = new Date().toISOString()
-  const stmt = db.prepare(
-    `INSERT INTO recommendations (user_id, assessment_id, competency, course_id, course_title, relevance, created_at)
-     VALUES (?,?,?,?,?,?,?)`,
+  await client.batch(
+    recommendations.map((c) => ({
+      sql: `INSERT INTO recommendations (user_id, assessment_id, competency, course_id, course_title, relevance, created_at)
+            VALUES (?,?,?,?,?,?,?)`,
+      args: [userId, assessmentId, c.tags?.[0] || 'general', c.id, c.title, c.relevance ?? null, now],
+    })),
+    'write',
   )
-  tx(() => {
-    for (const c of recommendations || []) {
-      const competency = c.tags?.[0] || 'general'
-      stmt.run(userId, assessmentId, competency, c.id, c.title, c.relevance ?? null, now)
-    }
-  })
 }
 
-export const getLatestRecommendations = (userId) =>
-  db
-    .prepare(
-      `SELECT competency, course_id as courseId, course_title as courseTitle, relevance, created_at as createdAt
-       FROM recommendations WHERE user_id = ? ORDER BY created_at DESC LIMIT 12`,
-    )
-    .all(userId)
+export async function getLatestRecommendations(userId) {
+  const rs = await client.execute({
+    sql: `SELECT competency, course_id as courseId, course_title as courseTitle, relevance, created_at as createdAt
+          FROM recommendations WHERE user_id = ? ORDER BY created_at DESC LIMIT 12`,
+    args: [userId],
+  })
+  return rowsToObjs(rs)
+}
 
 /* -------------------------------------------------------- learning progress */
 
-export function upsertLearningProgress(userId, { competency, courseId, courseTitle, status }) {
+export async function upsertLearningProgress(userId, { competency, courseId, courseTitle, status }) {
   const now = new Date().toISOString()
-  db.prepare(
-    `INSERT INTO learning_progress (user_id, competency, course_id, course_title, status, created_at, updated_at)
-     VALUES (?,?,?,?,?,?,?)
-     ON CONFLICT(user_id, course_id) DO UPDATE SET status = excluded.status, updated_at = excluded.updated_at`,
-  ).run(userId, competency, courseId, courseTitle, status, now, now)
+  await client.execute({
+    sql: `INSERT INTO learning_progress (user_id, competency, course_id, course_title, status, created_at, updated_at)
+          VALUES (?,?,?,?,?,?,?)
+          ON CONFLICT(user_id, course_id) DO UPDATE SET status = excluded.status, updated_at = excluded.updated_at`,
+    args: [userId, competency, courseId, courseTitle, status, now, now],
+  })
 }
 
-export const listLearningProgress = (userId) =>
-  db
-    .prepare('SELECT competency, course_id as courseId, course_title as courseTitle, status, updated_at as updatedAt FROM learning_progress WHERE user_id = ?')
-    .all(userId)
+export async function listLearningProgress(userId) {
+  const rs = await client.execute({
+    sql: 'SELECT competency, course_id as courseId, course_title as courseTitle, status, updated_at as updatedAt FROM learning_progress WHERE user_id = ?',
+    args: [userId],
+  })
+  return rowsToObjs(rs)
+}
 
 /* -------------------------------------------------------------- admin stats */
 
-export function getAdminStats() {
-  const usersByRole = Object.fromEntries(
-    db.prepare('SELECT role, COUNT(*) c FROM users GROUP BY role').all().map((r) => [r.role, r.c]),
+export async function getAdminStats() {
+  const roleRows = rowsToObjs(await client.execute('SELECT role, COUNT(*) c FROM users GROUP BY role'))
+  const usersByRole = Object.fromEntries(roleRows.map((r) => [r.role, r.c]))
+  const departments = rowsToObjs(
+    await client.execute("SELECT department, COUNT(*) c FROM users WHERE department IS NOT NULL GROUP BY department ORDER BY c DESC"),
   )
-  const departments = db
-    .prepare("SELECT department, COUNT(*) c FROM users WHERE department IS NOT NULL GROUP BY department ORDER BY c DESC")
-    .all()
-  const materialsCount = db.prepare('SELECT COUNT(*) c FROM materials').get().c
-  const questionsCount = countQuestions()
-  const assessmentsCount = db.prepare('SELECT COUNT(*) c FROM assessments').get().c
-  const avgOverall = db.prepare('SELECT AVG(overall) a FROM assessments').get().a
-  const recentMaterials = db
-    .prepare(
+  const materialsCount = (await client.execute('SELECT COUNT(*) c FROM materials')).rows[0][0]
+  const questionsCount = await countQuestions()
+  const assessmentsCount = (await client.execute('SELECT COUNT(*) c FROM assessments')).rows[0][0]
+  const avgOverallRow = (await client.execute('SELECT AVG(overall) a FROM assessments')).rows[0][0]
+  const recentMaterials = rowsToObjs(
+    await client.execute(
       `SELECT m.id, m.original_name as originalName, m.status, m.created_at as createdAt, u.name as ownerName
        FROM materials m JOIN users u ON u.id = m.user_id ORDER BY m.created_at DESC LIMIT 8`,
-    )
-    .all()
-  const recentUsers = db
-    .prepare('SELECT id, name, email, role, department, created_at as createdAt FROM users ORDER BY created_at DESC LIMIT 8')
-    .all()
+    ),
+  )
+  const recentUsers = rowsToObjs(
+    await client.execute('SELECT id, name, email, role, department, created_at as createdAt FROM users ORDER BY created_at DESC LIMIT 8'),
+  )
   return {
     totalUsers: Object.values(usersByRole).reduce((a, b) => a + b, 0),
     usersByRole,
@@ -355,7 +382,7 @@ export function getAdminStats() {
     materialsCount,
     questionsCount,
     assessmentsCount,
-    avgOverall: avgOverall != null ? Math.round(avgOverall) : null,
+    avgOverall: avgOverallRow != null ? Math.round(avgOverallRow) : null,
     recentMaterials,
     recentUsers,
   }
@@ -371,14 +398,14 @@ const DEPARTMENTS = [
   'State Directorate of Economics & Statistics',
 ]
 
-export function seedIfEmpty() {
-  const n = db.prepare('SELECT COUNT(*) c FROM users').get().c
+export async function seedIfEmpty() {
+  const n = (await client.execute('SELECT COUNT(*) c FROM users')).rows[0][0]
   if (n > 0) return
 
   const now = new Date().toISOString()
 
   // 1 admin + 1 training manager + 1 primary learner + a demo cohort
-  createUser({
+  await createUser({
     email: 'admin@nexora.gov.in',
     password: 'demo1234',
     name: 'System Admin',
@@ -386,7 +413,7 @@ export function seedIfEmpty() {
     department: 'Capacity Building Commission',
   })
 
-  createUser({
+  await createUser({
     email: 'manager@nexora.gov.in',
     password: 'demo1234',
     name: 'Nodal Training Manager',
@@ -394,7 +421,7 @@ export function seedIfEmpty() {
     department: 'National Sample Survey Office',
   })
 
-  const primary = createUser({
+  const primary = await createUser({
     email: 'learner@nexora.gov.in',
     password: 'demo1234',
     name: 'Arun Kumar',
@@ -402,13 +429,15 @@ export function seedIfEmpty() {
     department: 'Statistical Training',
   })
 
-  const insAssess = db.prepare(
-    `INSERT INTO assessments (user_id, document_name, overall, correct_count, total_questions, source, result_json, taken_at)
-     VALUES (?,?,?,?,?,?,?,?)`,
-  )
+  const insAssess = (args) =>
+    client.execute({
+      sql: `INSERT INTO assessments (user_id, document_name, overall, correct_count, total_questions, source, result_json, taken_at)
+            VALUES (?,?,?,?,?,?,?,?)`,
+      args,
+    })
   // two earlier attempts for the progress sparkline (thin rows are fine — only the columns are read)
-  insAssess.run(primary.id, SAMPLE_DOCUMENT.name, 41, 4, 10, 'offline', JSON.stringify({ overall: 41 }), '2026-09-05T09:10:00Z')
-  insAssess.run(primary.id, SAMPLE_DOCUMENT.name, 55, 6, 10, 'offline', JSON.stringify({ overall: 55 }), '2026-09-06T10:30:00Z')
+  await insAssess([primary.id, SAMPLE_DOCUMENT.name, 41, 4, 10, 'offline', JSON.stringify({ overall: 41 }), '2026-09-05T09:10:00Z'])
+  await insAssess([primary.id, SAMPLE_DOCUMENT.name, 55, 6, 10, 'offline', JSON.stringify({ overall: 55 }), '2026-09-06T10:30:00Z'])
 
   // a real latest result computed by the actual scoring engine (~70%, mixed bands)
   const qs = SAMPLE_QUESTION_BANK.slice(0, 10)
@@ -416,7 +445,7 @@ export function seedIfEmpty() {
   qs.forEach((q, i) => (ans[q.id] = i % 10 < 7 ? q.answer : (q.answer + 1) % 4))
   const arunResult = scoreQuiz(qs, ans)
   arunResult.takenAt = '2026-09-07T14:00:00Z'
-  insAssess.run(
+  await insAssess([
     primary.id,
     SAMPLE_DOCUMENT.name,
     arunResult.overall,
@@ -425,33 +454,38 @@ export function seedIfEmpty() {
     'offline',
     JSON.stringify(arunResult),
     arunResult.takenAt,
-  )
-  upsertProfile(primary.id, mergeProfile({ 'basic-stats': 84, probability: 58, regression: 55, visualization: 70 }, arunResult))
+  ])
+  await upsertProfile(primary.id, mergeProfile({ 'basic-stats': 84, probability: 58, regression: 55, visualization: 70 }, arunResult))
 
   // cohort — reuse the deterministic generator the frontend used
   const cohort = buildCohort(30)
-  const insUser = db.prepare(
-    'INSERT INTO users (email, password_hash, name, role, department, created_at) VALUES (?,?,?,?,?,?)',
-  )
   const hash = bcrypt.hashSync('demo1234', 8)
-  tx(() => {
-    cohort.forEach((l, i) => {
-      const dept = DEPARTMENTS[i % DEPARTMENTS.length]
-      const info = insUser.run(`l${String(i + 1).padStart(2, '0')}@nexora.demo`, hash, l.name, 'learner', dept, now)
-      const uid = info.lastInsertRowid
-      const prof = {}
-      COMPETENCY_ORDER.forEach((id) => {
-        if (l.topics[id] != null) prof[id] = l.topics[id]
-      })
-      upsertProfile(uid, prof)
-      for (let a = 0; a < l.assessments; a++) {
-        const ov = Math.max(20, Math.min(95, l.overall + (a - l.assessments / 2) * 6 + Math.round((Math.random() - 0.5) * 8)))
-        db.prepare(
-          `INSERT INTO assessments (user_id, document_name, overall, correct_count, total_questions, source, result_json, taken_at)
-           VALUES (?,?,?,?,?,?,?,?)`,
-        ).run(uid, 'Assessment', Math.round(ov), Math.round(ov / 10), 10, 'offline', JSON.stringify({ overall: Math.round(ov) }), now)
-      }
+
+  for (let i = 0; i < cohort.length; i++) {
+    const l = cohort[i]
+    const dept = DEPARTMENTS[i % DEPARTMENTS.length]
+    const rs = await client.execute({
+      sql: 'INSERT INTO users (email, password_hash, name, role, department, created_at) VALUES (?,?,?,?,?,?)',
+      args: [`l${String(i + 1).padStart(2, '0')}@nexora.demo`, hash, l.name, 'learner', dept, now],
     })
-  })
-  console.log(`[db] seeded ${db.prepare('SELECT COUNT(*) c FROM users').get().c} users`)
+    const uid = Number(rs.lastInsertRowid)
+    const prof = {}
+    COMPETENCY_ORDER.forEach((id) => {
+      if (l.topics[id] != null) prof[id] = l.topics[id]
+    })
+    await upsertProfile(uid, prof)
+
+    const statements = []
+    for (let a = 0; a < l.assessments; a++) {
+      const ov = Math.max(20, Math.min(95, l.overall + (a - l.assessments / 2) * 6 + Math.round((Math.random() - 0.5) * 8)))
+      statements.push({
+        sql: `INSERT INTO assessments (user_id, document_name, overall, correct_count, total_questions, source, result_json, taken_at)
+              VALUES (?,?,?,?,?,?,?,?)`,
+        args: [uid, 'Assessment', Math.round(ov), Math.round(ov / 10), 10, 'offline', JSON.stringify({ overall: Math.round(ov) }), now],
+      })
+    }
+    if (statements.length) await client.batch(statements, 'write')
+  }
+  const total = (await client.execute('SELECT COUNT(*) c FROM users')).rows[0][0]
+  console.log(`[db] seeded ${total} users`)
 }

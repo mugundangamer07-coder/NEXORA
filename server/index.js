@@ -1,11 +1,12 @@
 import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
+import rateLimit from 'express-rate-limit'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { existsSync } from 'node:fs'
 
-import { seedIfEmpty } from './db.js'
+import { ensureReady, isEphemeral } from './db.js'
 import authRoutes from './routes/auth.js'
 import aiRoutes from './routes/ai.js'
 import assessmentRoutes from './routes/assessments.js'
@@ -19,26 +20,53 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 // for the web preview; ignore that here so the API and the frontend don't collide.
 const PORT = process.env.PORT && process.env.PORT !== '5173' ? process.env.PORT : 3001
 
-seedIfEmpty()
-
 const app = express()
 app.use(cors())
 app.use(express.json({ limit: '2mb' }))
 
-app.get('/api/health', (_req, res) => res.json({ ok: true }))
+// Schema creation + first-run seeding happen lazily on first request instead
+// of at module load — required on serverless (a cold start can't block at
+// import time the way a long-lived process could), and harmless everywhere
+// else since ensureReady() is memoized after its first call.
+app.use((req, res, next) => {
+  ensureReady().then(next, next)
+})
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many attempts. Try again in a few minutes.' },
+})
+const aiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many AI requests. Try again in a few minutes.' },
+})
+
+app.get('/api/health', (_req, res) => res.json({ ok: true, ephemeralDb: isEphemeral }))
+app.use('/api/auth/login', authLimiter)
+app.use('/api/auth/register', authLimiter)
 app.use('/api/auth', authRoutes)
-app.use('/api/ai', aiRoutes)
+app.use('/api/ai', aiLimiter, aiRoutes)
 app.use('/api/assessments', assessmentRoutes)
 app.use('/api/analytics', analyticsRoutes)
 app.use('/api/materials', materialsRoutes)
 app.use('/api/admin', adminRoutes)
 app.use('/api', miscRoutes) // /api/competencies, /api/dashboard, /api/recommendations, /api/learning-progress
 
-// Serve the built frontend in production (npm run build -> dist/)
-const dist = join(__dirname, '..', 'dist')
-if (existsSync(dist)) {
-  app.use(express.static(dist))
-  app.get('*', (_req, res) => res.sendFile(join(dist, 'index.html')))
+// Serve the built frontend in production (npm run build -> dist/). On Vercel
+// the static frontend is served by the platform itself (see vercel.json), so
+// this only matters for the single-process deployment shape (Render, `npm start`).
+if (!process.env.VERCEL) {
+  const dist = join(__dirname, '..', 'dist')
+  if (existsSync(dist)) {
+    app.use(express.static(dist))
+    app.get('*', (_req, res) => res.sendFile(join(dist, 'index.html')))
+  }
 }
 
 app.use((err, _req, res, _next) => {
@@ -49,4 +77,10 @@ app.use((err, _req, res, _next) => {
 process.on('unhandledRejection', (e) => console.error('[nexora] unhandledRejection:', e))
 process.on('uncaughtException', (e) => console.error('[nexora] uncaughtException:', e))
 
-app.listen(PORT, () => console.log(`[nexora] API on http://localhost:${PORT}`))
+// Vercel imports this module for its request/response contract and never
+// calls listen() itself — starting a listener there would be a no-op at best.
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => console.log(`[nexora] API on http://localhost:${PORT}`))
+}
+
+export default app

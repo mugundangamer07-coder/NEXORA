@@ -7,16 +7,18 @@ competency gaps, generates quizzes/MCQs from uploaded learning material, and rec
 personalized training. **NEXORA does not replace iGOT Karmayogi** — it is designed as an
 AI-powered competency-assessment and learning-intelligence layer that complements it.
 
-Full-stack, working prototype: **React + Vite** frontend, **Node + Express + SQLite**
-backend, real accounts (JWT + bcrypt), server-side Gemini AI with an offline fallback,
-and deterministic (non-AI) scoring.
+Full-stack, working prototype: **React + Vite** frontend, **Node + Express** backend on
+**libSQL** (SQLite-compatible — a local file in dev, a hosted Turso database in
+production), real accounts (JWT + bcrypt), server-side Gemini AI with an offline
+fallback, and deterministic (non-AI) scoring. Runs as a single Express server (Render/any
+Node host) **or** as Vercel serverless functions from the same codebase — see
+[Deployment](#deployment).
 
 ## Run it
 
 ```bash
-cd D:\Project\saksham
 npm install
-copy .env.example .env      # then edit JWT_SECRET (any long random string)
+cp .env.example .env        # then edit JWT_SECRET (any long random string)
 npm run dev:all             # starts the API (:3001) and the web app (:5173) together
 ```
 
@@ -104,12 +106,17 @@ reproducible.
 | `GET /api/recommendations` | ✓ | Latest persisted recommendation snapshot |
 | `GET`/`POST /api/learning-progress` | ✓ | Track "recommended / in progress / completed" per course |
 
-## Database (SQLite, `data/nexora.db`, git-ignored)
+## Database (libSQL — SQLite-compatible)
+
+Local dev / Render: a real SQLite file (`data/nexora.db`, git-ignored) — nothing to set up.
+On Vercel, set `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN` (see [Deployment](#deployment)) so
+writes persist across serverless invocations; the query layer (`server/db.js`) is identical
+either way.
 
 | Table | Holds |
 |---|---|
 | `users` | accounts — email, bcrypt hash, name, `role`, department |
-| `materials` | uploaded PDFs — filename on disk, extracted text, AI topic map, status |
+| `materials` | uploaded PDF metadata, extracted text, AI topic map, status (raw file bytes aren't stored — text extraction happens client-side and only the text is persisted) |
 | `questions` | MCQs generated per material (audit trail, admin visibility) |
 | `assessments` | every quiz attempt — full scored result as JSON, linked to a material |
 | `profile` | each learner's rolling per-competency score (the source of the dashboard) |
@@ -124,8 +131,9 @@ measured against and don't change per-user.
 
 | Path | Purpose |
 |---|---|
-| `server/index.js` | Express app, route mounting, serves `dist/` in production |
-| `server/db.js` | `node:sqlite` schema, migrations, query helpers, first-run seeding |
+| `server/index.js` | Express app, route mounting, serves `dist/` in production (Render/local) |
+| `api/index.js` | Vercel serverless entrypoint — re-exports the same Express app |
+| `server/db.js` | libSQL schema, migrations, query helpers, first-run seeding (async) |
 | `server/auth.js` | JWT sign/verify, `requireAuth` / `requireRole` / `requireManager` / `requireAdmin` |
 | `server/lib/gemini.js` | server-side Gemini + retry-then-offline-fallback |
 | `server/routes/*.js` | `auth`, `ai`, `materials`, `assessments`, `analytics`, `admin`, `misc` (dashboard/competencies/recommendations/learning-progress) |
@@ -149,20 +157,39 @@ unchanged. **No live government API access or real pilot is claimed anywhere.**
 
 ## Deployment
 
-Deploys as **one Node web service** (Render, free tier) — the Express server serves the
-built React app and the API from the same origin, so there's no CORS setup.
+The same codebase deploys two ways. Both serve the built React app and the API from the
+same origin, so there's no CORS setup either way.
+
+### Vercel (serverless)
+
+1. Push this repo to GitHub, then import it on Vercel (framework preset: leave as
+   detected/"Other" — `vercel.json` already sets the build command and rewrites).
+2. In **Project Settings → Environment Variables**, set:
+   - `JWT_SECRET` — required. The server **refuses to start without it** on Vercel (no
+     insecure fallback in production).
+   - `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN` — required for real persistence (accounts,
+     uploads, assessments survive across requests). Free database at https://turso.tech.
+     Without these, the app still deploys and the seeded demo accounts still work, but
+     writes only last for the current serverless instance (`GET /api/health` reports
+     `ephemeralDb: true` in that case).
+   - `GEMINI_API_KEY` — optional, for live AI (leave blank for offline mode).
+3. Deploy. `api/index.js` wraps the same Express app used locally/on Render — every route
+   is unchanged; only the transport differs.
+
+### Render / any long-running Node host
 
 1. Push this repo to GitHub.
 2. On Render: **New +** → **Blueprint** → pick the repo. `render.yaml` pre-fills the build
    command (`npm install && npm run build`), start command (`npm start`), and a generated
    `JWT_SECRET`.
-3. Optionally set `GEMINI_API_KEY` for live AI (leave blank for offline mode).
-4. Deploy → you get a public URL like `https://nexora-xxxx.onrender.com`, reachable from
-   any laptop, phone, or tablet.
+3. Optionally set `GEMINI_API_KEY` for live AI, and `TURSO_DATABASE_URL`/`TURSO_AUTH_TOKEN`
+   if you want the same hosted database as a Vercel deployment — otherwise Render uses a
+   local SQLite file on its persistent disk, same as local dev.
+4. Deploy → you get a public URL like `https://nexora-xxxx.onrender.com`.
 
-Full click-by-click steps are in `NEXORA_Operating_Kit.pdf` (project deliverables folder).
-
-**Env vars:** `JWT_SECRET` (required), `GEMINI_API_KEY` (optional), `PORT` (set by the host).
+**Env vars:** `JWT_SECRET` (required everywhere), `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN`
+(required on Vercel for persistence, optional/unneeded on Render), `GEMINI_API_KEY`
+(optional, either host), `PORT` (set by the host, ignored on Vercel).
 
 ## Roadmap
 

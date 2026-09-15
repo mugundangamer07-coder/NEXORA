@@ -19,8 +19,8 @@ r.get(
   '/dashboard',
   requireAuth,
   wrap(async (req, res) => {
-    const profile = getProfile(req.user.id)
-    const result = latestResult(req.user.id)
+    const profile = await getProfile(req.user.id)
+    const result = await latestResult(req.user.id)
     res.json(await buildDashboardBundle(req.user.id, result, profile))
   }),
 )
@@ -30,7 +30,7 @@ r.get(
   '/recommendations',
   requireAuth,
   wrap(async (req, res) => {
-    res.json(getLatestRecommendations(req.user.id))
+    res.json(await getLatestRecommendations(req.user.id))
   }),
 )
 
@@ -39,7 +39,7 @@ r.get(
 r.get(
   '/learning-progress',
   requireAuth,
-  wrap(async (req, res) => res.json(listLearningProgress(req.user.id))),
+  wrap(async (req, res) => res.json(await listLearningProgress(req.user.id))),
 )
 r.post(
   '/learning-progress',
@@ -49,8 +49,8 @@ r.post(
     if (!courseId || !courseTitle || !['recommended', 'in_progress', 'completed'].includes(status)) {
       return res.status(400).json({ error: 'competency, courseId, courseTitle and a valid status are required' })
     }
-    upsertLearningProgress(req.user.id, { competency: competency || 'general', courseId, courseTitle, status })
-    res.json(listLearningProgress(req.user.id))
+    await upsertLearningProgress(req.user.id, { competency: competency || 'general', courseId, courseTitle, status })
+    res.json(await listLearningProgress(req.user.id))
   }),
 )
 
