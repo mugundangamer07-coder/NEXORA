@@ -20,6 +20,15 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 // for the web preview; ignore that here so the API and the frontend don't collide.
 const PORT = process.env.PORT && process.env.PORT !== '5173' ? process.env.PORT : 3001
 
+// A failed database init is the one server fault a demo operator has to fix
+// themselves, so it says what broke instead of the generic "Server error".
+function dbErrorMessage(err) {
+  const detail = String(err?.message || err || 'unknown error')
+  return isEphemeral
+    ? `Database unavailable: ${detail}. No TURSO_DATABASE_URL is set, so the app fell back to temporary storage.`
+    : `Database unavailable: ${detail}`
+}
+
 const app = express()
 // Both Vercel and Render sit in front of the app as a reverse proxy — without
 // this, req.ip is the proxy's own address (wrong for rate limiting) and
@@ -28,12 +37,29 @@ app.set('trust proxy', 1)
 app.use(cors())
 app.use(express.json({ limit: '2mb' }))
 
+// Answered before the database gate below, so it still responds when the DB is
+// down — that's the case you most need a health check for.
+app.get('/api/health', (_req, res) => {
+  ensureReady().then(
+    () => res.json({ ok: true, ephemeralDb: isEphemeral }),
+    (err) => res.status(503).json({ ok: false, ephemeralDb: isEphemeral, error: dbErrorMessage(err) }),
+  )
+})
+
 // Schema creation + first-run seeding happen lazily on first request instead
 // of at module load — required on serverless (a cold start can't block at
 // import time the way a long-lived process could), and harmless everywhere
 // else since ensureReady() is memoized after its first call.
 app.use((req, res, next) => {
-  ensureReady().then(next, next)
+  // next() must be called with no argument: Express reads any truthy first
+  // argument as an error, so `.then(next, next)` would break on a resolved value.
+  ensureReady().then(
+    () => next(),
+    (err) => {
+      console.error('[nexora] database init failed:', err)
+      res.status(503).json({ error: dbErrorMessage(err) })
+    },
+  )
 })
 
 const authLimiter = rateLimit({
@@ -51,7 +77,6 @@ const aiLimiter = rateLimit({
   message: { error: 'Too many AI requests. Try again in a few minutes.' },
 })
 
-app.get('/api/health', (_req, res) => res.json({ ok: true, ephemeralDb: isEphemeral }))
 app.use('/api/auth/login', authLimiter)
 app.use('/api/auth/register', authLimiter)
 app.use('/api/auth', authRoutes)
