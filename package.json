@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "server": "node --watch server/index.js",
+    "server": "node --watch-path=server --watch-path=src server/index.js",
     "dev:all": "concurrently -n web,api -c blue,green \"npm:dev\" \"npm:server\"",
     "start": "node server/index.js",
     "build": "vite build",

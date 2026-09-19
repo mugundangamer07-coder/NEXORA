@@ -1,5 +1,5 @@
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
-import { Loader2 } from 'lucide-react'
+import { Loader2, WifiOff, RotateCw } from 'lucide-react'
 import { useApp } from './context/AppState.jsx'
 import Layout from './components/Layout.jsx'
 import Login from './pages/Login.jsx'
@@ -16,6 +16,26 @@ function Splash() {
   return (
     <div className="min-h-screen grid place-items-center text-slate-400">
       <Loader2 className="animate-spin" />
+    </div>
+  )
+}
+
+function ServerUnreachable({ message }) {
+  return (
+    <div className="min-h-screen grid place-items-center px-4">
+      <div className="card max-w-md w-full p-8 text-center">
+        <div className="mx-auto grid place-items-center w-12 h-12 rounded-full bg-rose-50 text-rose-600">
+          <WifiOff size={22} />
+        </div>
+        <h1 className="mt-4 text-lg font-bold text-ink-900">Can't reach the NEXORA server</h1>
+        <p className="mt-1 text-sm text-slate-500">{message}</p>
+        <p className="mt-1 text-xs text-slate-400">
+          If the app was idle, the server may still be waking up — this can take up to a minute.
+        </p>
+        <button className="btn-primary mt-5" onClick={() => window.location.reload()}>
+          <RotateCw size={15} /> Try again
+        </button>
+      </div>
     </div>
   )
 }
@@ -39,6 +59,7 @@ function RequireAuth({ roles, children }) {
 
 export default function App() {
   const { state } = useApp()
+  if (state.bootError) return <ServerUnreachable message={state.bootError} />
 
   return (
     <Routes>

@@ -23,6 +23,8 @@ const serverState = {
 const loggedOut = {
   authReady: false, // finished checking the stored token
   hydrated: false, // finished the first /assessments/state fetch (or no user)
+  bootError: null, // couldn't verify the stored session because the server was unreachable
+  syncError: null, // signed in, but loading this user's data failed
   user: null,
   liveAI: false,
   ...transient,
@@ -48,8 +50,19 @@ export function AppStateProvider({ children }) {
   const refreshState = useCallback(async () => {
     const d = await apiFetch('/assessments/state')
     applyServerState(d)
+    patch({ syncError: null })
     return d
-  }, [applyServerState])
+  }, [applyServerState, patch])
+
+  // A failed data load must still end hydration, or route guards spin forever.
+  const hydrate = useCallback(async () => {
+    try {
+      await refreshState()
+    } catch (e) {
+      patch({ syncError: e.message })
+    }
+    patch({ hydrated: true })
+  }, [refreshState, patch])
 
   // on load: verify token, hydrate
   useEffect(() => {
@@ -59,38 +72,44 @@ export function AppStateProvider({ children }) {
         patch({ authReady: true, hydrated: true })
         return
       }
+      let me
       try {
-        const { user, liveAI } = await apiFetch('/auth/me')
+        me = await apiFetch('/auth/me')
+      } catch (e) {
         if (!alive) return
-        setLiveAI(liveAI)
-        patch({ user, liveAI, authReady: true })
-        await refreshState()
-        if (alive) patch({ hydrated: true })
-      } catch {
-        setToken(null)
-        if (alive) patch({ ...loggedOut, authReady: true, hydrated: true })
+        // Only a rejected token means "signed out"; a sleeping server doesn't.
+        if (e.status === 401 || e.status === 404) {
+          setToken(null)
+          patch({ ...loggedOut, authReady: true, hydrated: true })
+        } else {
+          patch({ authReady: true, hydrated: true, bootError: e.message })
+        }
+        return
       }
+      if (!alive) return
+      setLiveAI(me.liveAI)
+      patch({ user: me.user, liveAI: me.liveAI, authReady: true })
+      await hydrate()
     })()
     return () => {
       alive = false
     }
-  }, [patch, refreshState])
+  }, [patch, hydrate])
 
   const finishAuth = useCallback(
     async ({ token, user, liveAI }) => {
       setToken(token)
       setLiveAI(liveAI)
       patch({ ...loggedOut, authReady: true, user, liveAI })
-      await refreshState()
-      patch({ hydrated: true })
+      await hydrate()
     },
-    [patch, refreshState],
+    [patch, hydrate],
   )
 
   const login = useCallback(
     async (email, password) => {
       try {
-        const d = await apiFetch('/auth/login', { method: 'POST', auth: false, body: { email, password } })
+        const d = await apiFetch('/auth/login', { method: 'POST', auth: false, retry: true, body: { email, password } })
         await finishAuth(d)
         return { ok: true }
       } catch (e) {

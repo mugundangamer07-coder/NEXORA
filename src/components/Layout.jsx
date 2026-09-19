@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Upload, BarChart3, GraduationCap, Building2, ShieldCheck, Sparkles, LogOut, Menu, X } from 'lucide-react'
+import { LayoutDashboard, Upload, BarChart3, GraduationCap, Building2, ShieldCheck, Sparkles, LogOut, Menu, X, TriangleAlert, RotateCw } from 'lucide-react'
 import { useApp } from '../context/AppState.jsx'
 import { BrandMark } from './ui.jsx'
 
@@ -22,11 +22,20 @@ const ROLE_LABEL = { learner: 'Learner', manager: 'Training Manager', admin: 'Ad
 const isDemoAccount = (email) => /@nexora\.(gov\.in|demo)$/i.test(email || '')
 
 export default function Layout({ children }) {
-  const { state, logout } = useApp()
+  const { state, logout, refreshState } = useApp()
+  const [retrying, setRetrying] = useState(false)
   const nav = useNavigate()
   const loc = useLocation()
   const [menuOpen, setMenuOpen] = useState(false)
   const items = NAV_BY_ROLE[state.user?.role] || learnerNav
+
+  async function retrySync() {
+    setRetrying(true)
+    try {
+      await refreshState()
+    } catch {}
+    setRetrying(false)
+  }
 
   function doLogout() {
     logout()
@@ -165,7 +174,18 @@ export default function Layout({ children }) {
         )}
       </header>
 
-      <main className="mx-auto max-w-7xl px-4 py-6">{children}</main>
+      <main className="mx-auto max-w-7xl px-4 py-6">
+        {state.syncError && (
+          <div className="mb-4 flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+            <TriangleAlert size={18} className="shrink-0" />
+            <span className="flex-1">Couldn't load your saved data: {state.syncError}</span>
+            <button onClick={retrySync} disabled={retrying} className="btn-ghost shrink-0">
+              <RotateCw size={14} className={retrying ? 'animate-spin' : ''} /> Retry
+            </button>
+          </div>
+        )}
+        {children}
+      </main>
 
       <footer className="mx-auto max-w-7xl px-4 py-8 text-xs text-slate-400">
         NEXORA · Prototype for Smart India Hackathon (SIH26101) · Recommendations shown from a demo catalogue modelled on
