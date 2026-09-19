@@ -3,6 +3,11 @@
 
 const TOKEN_KEY = 'nexora.token'
 
+// Empty on the web (the API is same-origin). The Android app ships its pages
+// inside the APK, so it must be built with the backend's full URL here.
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '')
+const apiUrl = (path) => `${API_BASE}/api${path}`
+
 export function getToken() {
   try {
     return localStorage.getItem(TOKEN_KEY)
@@ -46,7 +51,7 @@ export async function apiFetch(path, { method = 'GET', body, auth = true, retry 
   if (auth && tok) headers.authorization = `Bearer ${tok}`
 
   const res = await fetchWithRetry(
-    `/api${path}`,
+    apiUrl(path),
     { method, headers, body: body === undefined ? undefined : JSON.stringify(body) },
     retry,
   )
@@ -75,7 +80,7 @@ export async function apiUpload(path, file) {
   const tok = getToken()
   if (tok) headers.authorization = `Bearer ${tok}`
 
-  const res = await fetch(`/api${path}`, { method: 'POST', headers, body: form })
+  const res = await fetch(apiUrl(path), { method: 'POST', headers, body: form })
   let data = {}
   try {
     data = await res.json()

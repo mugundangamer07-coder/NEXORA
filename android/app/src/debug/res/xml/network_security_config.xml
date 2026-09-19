@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DEBUG BUILDS ONLY (src/debug is never merged into release builds).
+     Lets a debug APK reach a backend running on your PC through
+     `adb reverse tcp:3001 tcp:3001` at http://127.0.0.1:3001.
+     Everything else keeps Android's default: HTTPS only. -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>
