@@ -146,9 +146,9 @@ export default function UploadPage() {
       {topicMap && !busy && (
         <Fade>
           <Card className="mt-6">
-            <div className="flex items-center gap-2">
-              <ScanSearch className="text-brand" size={18} />
-              <h3 className="font-bold text-ink-900">AI analysis of “{topicMap.documentName}”</h3>
+            <div className="flex flex-wrap items-center gap-2">
+              <ScanSearch className="text-brand shrink-0" size={18} />
+              <h3 className="min-w-0 font-bold text-ink-900 [overflow-wrap:anywhere]">AI analysis of “{topicMap.documentName}”</h3>
               <Pill tone={topicMap.source === 'live' ? 'strong' : 'slate'}>
                 {topicMap.source === 'live' ? 'Generated live' : 'Bundled sample'}
               </Pill>

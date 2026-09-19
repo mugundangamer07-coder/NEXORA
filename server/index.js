@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { existsSync } from 'node:fs'
 
 import { ensureReady, isEphemeral } from './db.js'
+import { configError } from './auth.js'
 import authRoutes from './routes/auth.js'
 import aiRoutes from './routes/ai.js'
 import assessmentRoutes from './routes/assessments.js'
@@ -36,6 +37,10 @@ const app = express()
 app.set('trust proxy', 1)
 app.use(cors())
 app.use(express.json({ limit: '2mb' }))
+
+// With the server misconfigured, no API route may run (auth.js has no signing
+// secret) — every request, health included, gets the reason instead.
+app.use('/api', (_req, res, next) => (configError ? res.status(503).json({ ok: false, error: configError }) : next()))
 
 // Answered before the database gate below, so it still responds when the DB is
 // down — that's the case you most need a health check for.
